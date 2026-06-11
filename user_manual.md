@@ -51,7 +51,7 @@
 ### ۱. استخراج PDF به Markdown
 فایل‌های PDF را در پوشه پروژه قرار دهید و اجرا کنید:
 ```bash
-python3 pdf_to_markdown_optimized.py
+python3 pdf_to_markdown.py
 ```
 
 📂 خروجی در `markdown_output/` ذخیره می‌شود (یک فایل `.md` برای هر PDF).
