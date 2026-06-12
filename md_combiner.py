@@ -69,31 +69,22 @@ def iter_md_files(root: Path, pattern: str, recursive: bool, exclude_names: set[
         if p.is_file():
             yield p
 
-def main():
-    ap = argparse.ArgumentParser(description="Combine .md files with AI-friendly separators and normalized unique IDs.")
-    ap.add_argument("path", nargs="?", default=".", help="پوشه‌ی ورودی (پیش‌فرض: پوشه‌ی جاری)")
-    ap.add_argument("-o", "--output", default="combined_output_with_separators.md", help="نام فایل خروجی")
-    ap.add_argument("--pattern", default="*.md", help="الگوی جستجو (پیش‌فرض: *.md)")
-    ap.add_argument("-R", "--recursive", action="store_true", help="جستجوی بازگشتی در زیرپوشه‌ها")
-    ap.add_argument("--id-start", type=int, default=1, help="شماره شروع id (مثلاً 101 برای دستهٔ دوم)")
-    args = ap.parse_args()
 
-    root = Path(args.path).resolve()
-    out_path = (root / args.output) if not Path(args.output).is_absolute() else Path(args.output)
-    exclude = {out_path.name}
+def combine_md_files(md_files: list[Path], id_start: int = 1) -> tuple[str, int]:
+    """
+    چند فایل Markdown را با جداکننده‌های <<<FILE_START/END>>> و متادیتای JSON
+    در یک فایل واحد ترکیب می‌کند و لنگرهای هر فایل را به {#id<N>-...} با
+    شناسه‌های یکتا و پیوسته (با شروع از id_start) یکدست می‌کند.
 
-    md_files = list(iter_md_files(root, args.pattern, args.recursive, exclude))
-    if not md_files:
-        print(f"هیچ فایل {args.pattern} در مسیر '{root}' پیدا نشد.")
-        return
-
+    خروجی: (متن ترکیب‌شده، آخرین شماره id استفاده شده)
+    """
     lines = []
     lines.append("# Documents Combined\n")
     for idx, p in enumerate(md_files, 1):
         lines.append(f"- {idx}. {p.name}")
     lines.append("")
 
-    current_id = args.id_start  # BASE برای اولین فایل
+    current_id = id_start  # BASE برای اولین فایل
 
     for idx, p in enumerate(md_files, 1):
         try:
@@ -129,9 +120,30 @@ def main():
 
         current_id += 1  # برای فایل بعدی
 
-    out_path.write_text("\n".join(lines), encoding="utf-8")
+    return "\n".join(lines), current_id - 1
 
-    last_id = current_id - 1
+
+def main():
+    ap = argparse.ArgumentParser(description="Combine .md files with AI-friendly separators and normalized unique IDs.")
+    ap.add_argument("path", nargs="?", default=".", help="پوشه‌ی ورودی (پیش‌فرض: پوشه‌ی جاری)")
+    ap.add_argument("-o", "--output", default="combined_output_with_separators.md", help="نام فایل خروجی")
+    ap.add_argument("--pattern", default="*.md", help="الگوی جستجو (پیش‌فرض: *.md)")
+    ap.add_argument("-R", "--recursive", action="store_true", help="جستجوی بازگشتی در زیرپوشه‌ها")
+    ap.add_argument("--id-start", type=int, default=1, help="شماره شروع id (مثلاً 101 برای دستهٔ دوم)")
+    args = ap.parse_args()
+
+    root = Path(args.path).resolve()
+    out_path = (root / args.output) if not Path(args.output).is_absolute() else Path(args.output)
+    exclude = {out_path.name}
+
+    md_files = list(iter_md_files(root, args.pattern, args.recursive, exclude))
+    if not md_files:
+        print(f"هیچ فایل {args.pattern} در مسیر '{root}' پیدا نشد.")
+        return
+
+    combined_text, last_id = combine_md_files(md_files, id_start=args.id_start)
+    out_path.write_text(combined_text, encoding="utf-8")
+
     print(f"✅ انجام شد. خروجی: {out_path}")
     print(f"🔢 LAST_ID_NUMBER={last_id}")
 
