@@ -12,6 +12,7 @@
 #   - خروجی تمیز و آماده پردازش‌های بعدی (AI، سرچ، وب)
 # ================================================
 
+import argparse
 import re
 import gc
 from collections import Counter
@@ -21,6 +22,8 @@ import fitz  # PyMuPDF
 import pdfplumber
 from tqdm import tqdm
 from datetime import datetime
+
+import md_combiner
 
 # ---------------------------------------------------------------------------
 # شماره‌گذاری بندها و Anchorها
@@ -396,7 +399,7 @@ def write_page(f, ordered_items, page_num, doc_id):
 # پردازش اصلی PDF
 # ---------------------------------------------------------------------------
 
-def process_pdf(pdf_path, output_dir, doc_id):
+def process_pdf(pdf_path, output_file, doc_id):
     """
     پردازش اصلی PDF:
     - باز کردن فایل PDF
@@ -409,7 +412,6 @@ def process_pdf(pdf_path, output_dir, doc_id):
     errors = []
 
     toc = extract_toc(pdf_path)
-    output_file = output_dir / f"{pdf_path.stem}.md"
 
     try:
         with pdfplumber.open(pdf_path) as pdf:
@@ -442,29 +444,105 @@ def process_pdf(pdf_path, output_dir, doc_id):
     return success, errors, duration
 
 
+def find_pdf_files(paths, pattern, recursive):
+    """
+    پیدا کردن فایل‌های PDF بر اساس آرگومان‌های ورودی.
+    هر آرگومان می‌تواند یک فایل PDF، یک پوشه (با پشتیبانی از جستجوی
+    بازگشتی) یا ترکیبی از این‌ها باشد. ترتیب ورودی حفظ می‌شود و فایل‌های
+    تکراری (مسیرهای یکسان) حذف می‌گردند.
+    """
+    files = []
+    seen = set()
+
+    def add(p):
+        resolved = p.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            files.append(p)
+
+    for raw in paths:
+        p = Path(raw)
+        if p.is_file():
+            if p.suffix.lower() == ".pdf":
+                add(p)
+            else:
+                print(f"⚠️  نادیده گرفته شد (PDF نیست): {p}")
+        elif p.is_dir():
+            glob_fn = p.rglob if recursive else p.glob
+            for f in sorted(glob_fn(pattern)):
+                if f.is_file():
+                    add(f)
+        else:
+            print(f"⚠️  مسیر پیدا نشد: {p}")
+
+    return files
+
+
 def main():
     """
     تابع اصلی برنامه:
+    - پردازش آرگومان‌های خط فرمان (فایل/پوشه/چند فایل/چند پوشه)
     - ساخت پوشه خروجی
-    - پیدا کردن PDFها
     - اجرای پردازش برای هر PDF
     - نمایش خلاصه‌ی نتایج
+    - تجمیع اختیاری خروجی‌ها در یک فایل Markdown واحد
     """
-    current_dir = Path.cwd()
-    output_dir = current_dir / "markdown_output"
-    output_dir.mkdir(exist_ok=True)
+    parser = argparse.ArgumentParser(
+        description="تبدیل فایل‌های PDF به Markdown ساخت‌یافته."
+    )
+    parser.add_argument(
+        "paths", nargs="*", default=["."],
+        help="فایل(های) PDF و/یا پوشه(های) ورودی (پیش‌فرض: پوشه جاری)"
+    )
+    parser.add_argument(
+        "-R", "--recursive", action="store_true",
+        help="جستجوی بازگشتی برای PDF در زیرپوشه‌ها"
+    )
+    parser.add_argument(
+        "--pattern", default="*.pdf",
+        help="الگوی جستجوی فایل هنگام دادن پوشه (پیش‌فرض: *.pdf)"
+    )
+    parser.add_argument(
+        "-o", "--output-dir", default="markdown_output",
+        help="پوشه خروجی برای فایل‌های Markdown (پیش‌فرض: markdown_output)"
+    )
+    parser.add_argument(
+        "--id-start", type=int, default=1,
+        help="شماره شروع شناسه‌های id (برای یکتا ماندن Anchorها بین چند اجرا)"
+    )
+    parser.add_argument(
+        "--combine", nargs="?", const="combined_output_with_separators.md",
+        default=None, metavar="OUTPUT",
+        help="علاوه بر خروجی تفکیکی، یک فایل Markdown تجمیعی هم بسازد "
+             "(نام پیش‌فرض: combined_output_with_separators.md)"
+    )
+    args = parser.parse_args()
 
-    pdf_files = list(current_dir.glob("*.pdf"))
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf_files = find_pdf_files(args.paths, args.pattern, args.recursive)
     if not pdf_files:
         print("No PDF files found.")
         return
 
     summary = []
-    for i, pdf in enumerate(pdf_files, 1):
-        print(f"\n📄 Processing {pdf.name} ({i}/{len(pdf_files)})...")
-        doc_id = f"id{i}"
-        success, errors, duration = process_pdf(pdf, output_dir, doc_id)
+    output_files = []
+    used_names = set()
+    for offset, pdf in enumerate(pdf_files):
+        doc_num = args.id_start + offset
+        doc_id = f"id{doc_num}"
+        print(f"\n📄 Processing {pdf.name} ({offset + 1}/{len(pdf_files)})...")
+        out_name = f"{pdf.stem}.md"
+        if out_name in used_names:
+            # برای جلوگیری از رونویسی هنگام پردازش چند پوشه با فایل‌های هم‌نام
+            out_name = f"{doc_id}_{pdf.stem}.md"
+        used_names.add(out_name)
+        output_file = output_dir / out_name
+        success, errors, duration = process_pdf(pdf, output_file, doc_id)
         summary.append((pdf.name, success, duration, errors))
+        if success:
+            output_files.append(output_file)
 
     print("\n📋 Summary:")
     for name, success, duration, errors in summary:
@@ -473,6 +551,16 @@ def main():
         if errors:
             for err in errors:
                 print(f"   ⚠️  {err}")
+
+    if args.combine is not None:
+        if not output_files:
+            print("\n⚠️  هیچ خروجی موفقی برای تجمیع وجود ندارد.")
+            return
+        combined_text, last_id = md_combiner.combine_md_files(output_files, id_start=args.id_start)
+        combined_path = output_dir / args.combine
+        combined_path.write_text(combined_text, encoding="utf-8")
+        print(f"\n✅ خروجی تجمیعی ساخته شد: {combined_path}")
+        print(f"🔢 LAST_ID_NUMBER={last_id}")
 
 
 if __name__ == "__main__":
