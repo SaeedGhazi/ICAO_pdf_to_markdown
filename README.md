@@ -7,8 +7,9 @@ A set of Python tools to convert PDF documents (e.g., ICAO standards) into struc
 - **`pdf_to_markdown.py`** — Converts one or more PDFs (a single file, multiple files, one folder, or multiple folders) into structured Markdown, with an optional combined output.
 - **`md_combiner.py`** — Combines multiple Markdown files into a single file with unique anchors and JSON metadata per document.
 - **`text_to_markdown.py`** — Combines the text/source files of one or more projects into a single Markdown file, using the same AI-friendly separator format. Useful for uploading a multi-file codebase to AI tools.
+- **`web_to_markdown.py`** — Crawls every page of a website/subdomain (e.g., a wiki) and combines the text content of all pages into a single AI-friendly Markdown file, using the same separator format.
 
-All three tools share a common separator convention:
+All four tools share a common separator convention:
 
 ```
 <<<FILE_START:{...json metadata...}>>>
@@ -49,6 +50,7 @@ This lets AI tools reliably detect the boundaries between documents/files and av
    - **PyMuPDF**: For TOC extraction.
    - **pdfplumber**: For text and table extraction.
    - **tqdm**: For progress bars.
+   - **requests**, **beautifulsoup4**, **html2text**: Used by `web_to_markdown.py` to crawl and convert web pages.
 
    `md_combiner.py` and `text_to_markdown.py` only use the Python standard library and need no extra installation.
 
@@ -152,6 +154,51 @@ python3 text_to_markdown.py . --exclude tests "*.spec.js" -o code_combined.md
 
 By default, sensitive files (`.env`, `*.pem`, `*.key`, `id_rsa*`, etc.), lock files, media/binary files, and dependency/build folders (`.git`, `node_modules`, `venv`, `dist`, `build`, etc.) are excluded.
 
+### 4. Crawl a Website/Subdomain to Markdown
+
+```bash
+python3 web_to_markdown.py URL [options]
+```
+
+`URL` is the starting page (e.g., the homepage of a subdomain). The crawler follows links that stay on the same domain and downloads each page's text content, converted to Markdown.
+
+| Option | Description |
+|---|---|
+| `url` | Starting URL to crawl (required) |
+| `-o`, `--output FILE` | Output file name (default: `web_combined.md`) |
+| `--title TITLE` | Title for the output file (default: the domain name) |
+| `--max-pages N` | Maximum number of pages to download (default: `200`) |
+| `--max-depth N` | Maximum link-following depth from the start page (default: unlimited) |
+| `--delay SECONDS` | Delay between requests, in seconds (default: `0.5`) |
+| `--same-path-only` | Only crawl pages under the same path prefix as the start URL |
+| `--include-query` | Also crawl URLs with a query string (default: skipped) |
+| `--include [PATTERN ...]` | Only crawl URLs matching one of these regex patterns |
+| `--exclude [PATTERN ...]` | Skip URLs matching one of these regex patterns (e.g., `'Special:'`, `'action=edit'`, `'Talk:'`) |
+| `--keep-images` | Keep image links in the Markdown output (default: stripped) |
+| `--user-agent UA` | Custom `User-Agent` header |
+| `--timeout SECONDS` | Request timeout, in seconds (default: `15`) |
+| `--ignore-robots` | Ignore `robots.txt` rules (default: respected) |
+
+Examples:
+
+```bash
+# Crawl an entire wiki subdomain into a single AI-friendly Markdown file
+python3 web_to_markdown.py https://wiki.flightgear.org/ -o flightgear_wiki.md --title "FlightGear Wiki"
+
+# Limit the crawl, skip MediaWiki utility pages, and be polite with delays
+python3 web_to_markdown.py https://wiki.flightgear.org/ \
+    -o flightgear_wiki.md --title "FlightGear Wiki" \
+    --max-pages 500 --delay 1 \
+    --exclude 'Special:' 'Talk:' 'User:' 'action=' 'oldid='
+
+# Only crawl pages under a specific path
+python3 web_to_markdown.py https://example.com/docs/ --same-path-only -o docs_combined.md
+```
+
+📂 Output is a single Markdown file: a list of crawled pages at the top, followed by each page's content wrapped in `<<<FILE_START/END>>>` separators with JSON metadata (`index`, `url`, `title`, `size`, `sha1`).
+
+> ⚠️ Be respectful of the target site: keep a reasonable `--delay`, set a sensible `--max-pages`, and leave `robots.txt` enforcement enabled unless you have permission to ignore it.
+
 ## Example Output
 
 ### Structured section:
@@ -179,19 +226,31 @@ The operator shall ensure that all systems are operational. [Page: 5]
 <<<FILE_END:{"index": 1, "id": "id1", "name": "icao_doc1.md"}>>>
 ```
 
+### Combined output entry (web-derived):
+```markdown
+<<<FILE_START:{"index": 1, "url": "https://wiki.flightgear.org/Main_Page", "title": "Main Page - FlightGear wiki", "size": 1234, "sha1": "..."}>>>
+## 1. Main Page - FlightGear wiki
+Source: https://wiki.flightgear.org/Main_Page
+
+# Welcome to the FlightGear wiki
+...page content converted to Markdown...
+<<<FILE_END:{"index": 1, "url": "https://wiki.flightgear.org/Main_Page"}>>>
+```
+
 ## Anchor Uniqueness Across Documents
 
 Each document gets a unique base id (`id1`, `id2`, ...), and all of its internal anchors are normalized to `{#id<N>-<section>}`. When combining multiple PDFs in one run with `--combine`, ids are assigned sequentially from `--id-start`, so no two documents share an anchor. For separate batches, set `--id-start` to `LAST_ID_NUMBER + 1` of the previous batch to keep anchors unique across the whole project.
 
 ## Documentation
 
-See [user_manual.md](user_manual.md) (in Persian) for a detailed usage guide covering all three tools.
+See [user_manual.md](user_manual.md) (in Persian) for a detailed usage guide covering all four tools.
 
 ## Limitations
 
 - **Scanned PDFs**: Require OCR (e.g., Tesseract) for non-text PDFs.
 - **Complex Tables**: Tables without clear borders may need `camelot-py` or manual editing.
 - **Custom Numbering**: Non-standard formats (e.g., `A.1.b`) may need code adjustments.
+- **`web_to_markdown.py`**: Only crawls plain links (`<a href>`); content rendered dynamically by JavaScript will not be captured. Very large sites may need a higher `--max-pages` or multiple runs scoped with `--same-path-only`/`--include`/`--exclude`.
 
 ## Troubleshooting
 
@@ -199,6 +258,7 @@ See [user_manual.md](user_manual.md) (in Persian) for a detailed usage guide cov
 - **PDF Issues**: Ensure PDFs have extractable text (test with Adobe Reader).
 - **Table Problems**: Verify tables have borders; consider `camelot-py` for complex cases.
 - **Missing files in `text_to_markdown.py` output**: Check `DEFAULT_EXCLUDE_DIRS`/`DEFAULT_EXCLUDE_PATTERNS`, `--exclude`, binary detection, or `--max-size`.
+- **`web_to_markdown.py` finds too few/many pages**: Check `--same-path-only`, `--include-query`, and `--include`/`--exclude` patterns; some sites also block crawlers via `robots.txt` (use `--ignore-robots` only if you have permission).
 
 ## Contributing
 
